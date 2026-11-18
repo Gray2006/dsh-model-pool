@@ -1,0 +1,11 @@
+node_modules/
+.pnpm-debug.log*
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 本机运行时留下的状态（含各自 profile 的路径，不该进仓库）
+model-pool-state.json
+model-pool-selection.json

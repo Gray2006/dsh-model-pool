@@ -1,0 +1,21 @@
+# dsh-model-pool —— DSH bundle patch
+#
+# 挂载声明。装进 profile 后把插件插进配置树。
+# 安装（本地开发）：junction 到 profiles\desktop\node_modules\dsh-model-pool
+# 然后在 profile 的 cordis.patch.yml 里加：
+#   - insert:
+#       - id: dsh-model-pool
+#         name: dsh-model-pool
+#         config:
+#           pool:
+#             - { provider: open-design, model: deepseek-v4.1-flash }
+#             - { provider: command-code, model: deepseek/deepseek-v4.1-flash }
+
+- insert:
+    - id: dsh-model-pool
+      name: dsh-model-pool
+      config:
+        enabled: true
+        cooldownMs: 600000
+        maxCooldownMs: 3600000
+        pool: []
