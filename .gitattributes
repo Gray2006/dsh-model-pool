@@ -1,0 +1,7 @@
+# 统一 LF：这个插件要在 Windows / macOS / Linux 上都能跑，
+# 混入 CRLF 会让 diff 噪音掩盖真实改动。
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
