@@ -61,8 +61,15 @@ Cooldowns are exponential per route: `cooldownMs × 2^(strikes-1)`, capped at
 
 ## Sidebar: choose which routes participate
 
-Once installed, a **额度池 / Model Pool** page appears in the right sidebar next to Files and
-Git, with a checkbox per route:
+Once installed, a **Model Pool** entry appears in the right sidebar's **+** menu — open it from
+there. The plugin opens it once automatically the first time it is installed, then leaves it
+alone if you close it; reopen any time from the + menu.
+
+(`registerTab` only registers the tab *type*; nothing appears on the tab strip by itself — that
+is better-sidebar's design: extension tabs are added through the + menu, not as permanent
+capsules.)
+
+Once open, each route gets a checkbox:
 
 - **Checked** — in auto-switch scope: skipped when it fails, and eligible as a fallback target
 - **Unchecked** — out of scope: it can still be the route you pick by hand, but auto-switch
