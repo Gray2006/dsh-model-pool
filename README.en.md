@@ -9,6 +9,71 @@ A sidebar page lets you pick which routes are allowed to take part.
 
 ---
 
+## The problem it solves
+
+Working with several relays and a few official quotas, the annoying part is not whether the
+model is smart enough — it is **running dry mid-turn**:
+
+```
+You have used up this month's quota
+```
+
+The turn is dead. You switch models by hand and start over.
+
+This plugin automates that step: order a few routes into a pool, and when one fails it moves
+to the next by itself, resuming the same step of the same turn. You usually will not notice.
+
+## Quick start
+
+### 1. Install
+
+```sh
+# macOS / Linux
+ln -s "<path-to-this-repo>" ~/.dsh/profiles/desktop/node_modules/dsh-model-pool
+```
+
+```powershell
+# Windows
+New-Item -ItemType Junction `
+  -Path "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-model-pool" `
+  -Target "<path-to-this-repo>"
+```
+
+### 2. Configure
+
+Edit `~/.dsh/profiles/desktop/cordis.patch.yml`:
+
+```yaml
+- insert:
+    - id: dsh-model-pool
+      name: dsh-model-pool
+      config:
+        pool:                       # order is priority; the first one is tried first
+          - { provider: open-design,  model: deepseek-v4.1-flash }
+          - { provider: command-code, model: deepseek/deepseek-v4.1-flash }
+          - { provider: zhipu,        model: glm-4.7-flash }
+```
+
+`provider` and `model` are the names already configured in your `llm-pi-ai` `providers`
+section. The plugin does not manage keys or rewrite your provider config — it only swaps the
+route just before the request leaves.
+
+### 3. Restart DSH
+
+Then confirm with:
+
+```
+model_pool_status
+```
+
+It reports which routes exist, who is cooling, and what the next request will use.
+
+### 4. (Optional) Pick routes in the sidebar
+
+A **Model Pool** entry appears in the right sidebar's **+** menu. The plugin opens it once the
+first time it is installed, then leaves it alone; reopen any time from the + menu. Each route
+gets a checkbox that takes effect immediately, no restart.
+
 ## What it does
 
 A pool is an ordered list of `provider/model` routes. The plugin hooks two host extension
@@ -105,6 +170,7 @@ In your profile's `cordis.patch.yml`:
         maxFailoversPerStep: 0     # 0 = derive from pool size
         persist: true
         statePath: ''              # empty = %DSH_HOME%/model-pool-state.json
+        debug: false               # log wiring and client diagnostics to the host log
         pool:                      # order is priority
           - { provider: open-design,  model: deepseek-v4.1-flash }
           - { provider: command-code, model: deepseek/deepseek-v4.1-flash }
@@ -123,23 +189,13 @@ carrying them across makes `prepareCall` reject the request.
 | `model_pool_reset` | Clear cooldowns (all, or one route) — run this after topping up |
 | `model_pool_toggle` | Move a route in or out of auto-switch scope (same as the sidebar checkbox) |
 
-## Install
+## Requirements
 
-```powershell
-# 1) link into your profile's node_modules
-New-Item -ItemType Junction `
-  -Path "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-model-pool" `
-  -Target "<path-to-this-repo>"
-
-# 2) add the insert block above to your profile's cordis.patch.yml
-
-# 3) restart DSH
-```
-
-The sidebar page additionally needs
+The sidebar page needs
 [`dsh-better-sidebar`](https://github.com/deepseek-ai/dsh-better-sidebar) — without it the
-failover half still works, you just get no page. (Its tab registers through
-`ctx.betterSidebar`.)
+failover half still works, you just get no page. (Its tab registers through `ctx.betterSidebar`.)
+
+Everything else is plain Node ≥ 20, no build step, no dependency tree.
 
 ## State files
 

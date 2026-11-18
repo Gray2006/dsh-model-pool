@@ -35,6 +35,34 @@ test('抖动类失败不摘通道', () => {
   }
 });
 
+test('套餐额度耗尽被包成 429 rate_limit_error 时也要摘', () => {
+  // 真实案例：供应商把「套餐周额度用完」报成 rate_limit_error，
+  // 只看 code 会当成抖动放行，于是整轮直接死在那里、不切换。
+  const real = '429: {"message":"You\'ve reached your weekly usage limit for your plan. '
+    + 'Your limit resets at 2026-11-19T04:28:23.290Z. Please wait for the window to reset '
+    + 'or upgrade your plan to continue.","type":"rate_limit_error"}';
+  assert.equal(classifyFailure('RATE_LIMIT', real), 'bench');
+  assert.equal(shouldFailover('RATE_LIMIT', real), true);
+
+  for (const text of [
+    'usage limit reached',
+    'You have exceeded your monthly usage limit',
+    'You have hit your daily usage limit',
+  ]) {
+    assert.equal(classifyFailure('RATE_LIMIT', text), 'bench', text);
+  }
+});
+
+test('真限流与上游抖动仍然放行（别误伤）', () => {
+  for (const text of [
+    'Too many requests per minute',
+    'rate limit exceeded, please slow down',
+    'upstream connect error or disconnect/reset before headers',
+  ]) {
+    assert.equal(classifyFailure('RATE_LIMIT', text), 'soft', text);
+  }
+});
+
 test('上下文超限与图片超限不换通道（换谁都一样）', () => {
   assert.equal(shouldFailover('CONTEXT_WINDOW_EXCEEDED', ''), false);
   assert.equal(shouldFailover('IMAGE_OFFLOAD_REQUIRED', ''), false);
