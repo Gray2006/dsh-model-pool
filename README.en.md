@@ -218,6 +218,20 @@ node --test test/pool.test.mjs test/host.test.mjs    # 32 cases
 
 `cordis.patch.yml` ships with `pool: []` so anyone copying the config is not silently rerouted.
 
+## Where this came from
+
+This plugin was not designed from a spec. It grew out of one specific annoying moment: a handful of relays and a couple of official quotas — plenty on paper — and yet the turn that mattered would die halfway through with "usage limit reached", forcing a manual model switch and a full restart.
+
+A few bugs found along the way ended up shaping the code:
+
+- When a plan's weekly quota runs out the upstream answers `429 rate_limit_error`, which looks like ordinary rate limiting. Trusting the code alone keeps retrying a dead route — so text evidence was promoted above the error code.
+- The sidebar tab registered but never appeared; the host returns silently when no session is bound yet, and `registerTab` only registers the tab *type* without putting anything on the tab strip.
+- The selection was first modelled as a removal list, which meant removing one of two routes did nothing at all: the fallback to the whole pool pulled the removed route straight back.
+
+The deliberate non-goals are the same kind of trade-off, not oversights: no probing because probing costs money and "reachable" is not "a real request succeeds"; no preemption of manual picks because human judgement outranks the plugin's guess; no provider config rewriting because that belongs to DSH.
+
+Built by me (Gray2006) in collaboration with an AI coding assistant. Every rule and every trade-off here is the result of something that actually ran, not a guess.
+
 ## License
 
 MIT
