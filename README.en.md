@@ -58,6 +58,10 @@ Edit `~/.dsh/profiles/desktop/cordis.patch.yml`:
 section. The plugin does not manage keys or rewrite your provider config — it only swaps the
 route just before the request leaves.
 
+**This step is optional.** On startup the plugin scans every model in the host that is
+configured *and* has a usable key; you can simply check them in the sidebar. `config.pool` is
+for **priority**: those routes are tried first.
+
 ### 3. Restart DSH
 
 Then confirm with:
@@ -134,24 +138,39 @@ alone if you close it; reopen any time from the + menu.
 is better-sidebar's design: extension tabs are added through the + menu, not as permanent
 capsules.)
 
-Once open, each route gets a checkbox:
+The page lists **every model the plugin discovered**, grouped by provider, each with a
+checkbox. Changes take effect immediately, no restart. `Select all` / `Select none` sit at the
+top; `Rescan` at the bottom refreshes the list after you add a provider — no DSH restart needed.
+
+```
+MODEL POOL
+2/4 routes in auto-switch scope. Only checked routes are used for failover.
+[Select all] [Select none]
+OPEN-DESIGN                        1/2
+☑ deepseek-v4.1-flash  [pinned]     [ready]
+☐ deepseek-v4.1-pro                 [out of scope]
+COMMAND-CODE                       1/1
+☑ deepseek/deepseek-v4.1-flash      [cooling 2m3s]
+```
 
 - **Checked** — in auto-switch scope: skipped when it fails, and eligible as a fallback target
 - **Unchecked** — out of scope: it can still be the route you pick by hand, but auto-switch
   will never land on it
+- **pinned** means the route is written in `config.pool`, so it is tried first
 
-Changes take effect immediately, no restart. The selection persists to
-`%DSH_HOME%/model-pool-selection.json`, separate from the cooldown table.
+**Adding a model**: if the provider is already configured in DSH, hit `Rescan` and it appears —
+then check it. **Removing**: uncheck it. To make it disappear from the list entirely, remove the
+provider from your DSH config.
 
-The default is **all on**: the file only records routes you removed, so adding a route to
-`config.pool` later does not require revisiting this page.
+The selection persists to `%DSH_HOME%/model-pool-selection.json`, separate from the cooldown
+table.
 
-Two guards:
+The semantics are a **strict allow-list**: only what you checked counts. Uncheck everything and
+nothing switches — the plugin will not quietly fall back to some default pool, because
+"uncheck" should mean uncheck.
 
-- Unchecking every route falls back to the whole pool. Otherwise one careless click would
-  silence every model at once — nobody wants that switch.
-- If the page cannot read state it says so plainly (e.g. the plugin has not been restarted
-  yet) instead of pretending there are zero routes.
+One exception: if you have **never** checked anything (fresh install, page never opened), it
+falls back to `config.pool` so the plugin is usable out of the box.
 
 The same thing is available without the page via the `model_pool_toggle` tool.
 

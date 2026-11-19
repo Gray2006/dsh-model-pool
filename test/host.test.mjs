@@ -6,11 +6,13 @@ import path from 'node:path';
 import { apply } from '../lib/index.js';
 
 /** 最小假 ctx：记录监听器，手动驱动 waterfall。 */
-function makeCtx({ providers = [], tools = true, webServer = undefined } = {}) {
+function makeCtx({ providers = [], tools = true, webServer = undefined, models = undefined } = {}) {
   const listeners = new Map();
   const registered = [];
   const effects = [];
   const routes = [];
+  // models: { providerId: ['model-a', ...] }；不传就按「每个 provider 一个同名模型」造
+  const catalog = models ?? Object.fromEntries(providers.map((id) => [id, [`${id}-model`]]));
   const services = {
     tools: tools
       ? {
@@ -20,7 +22,10 @@ function makeCtx({ providers = [], tools = true, webServer = undefined } = {}) {
           },
         }
       : undefined,
-    llm: { listProviders: () => providers.map((id) => ({ id, name: id })) },
+    llm: {
+      listProviders: () => providers.map((id) => ({ id, name: id })),
+      listModels: async (id) => (catalog[id] ?? []).map((model) => ({ provider: id, id: model, name: model })),
+    },
     webServer: webServer,
   };
   const ctx = {
@@ -257,7 +262,7 @@ test('移出切换范围的通道不会被选中，落盘后重启仍生效', as
   const home = withTmpHome();
   try {
     const stateFile = path.join(home.dir, 'state.json');
-    const first = makeCtx();
+    const first = makeCtx({ providers: [A.provider, B.provider] });
     apply(first.ctx, { pool: [A, B], statePath: stateFile, cooldownMs: 60_000, maxCooldownMs: 60_000 });
 
     const toggle = first.registered.find((t) => t.name === 'model_pool_toggle');
@@ -270,7 +275,7 @@ test('移出切换范围的通道不会被选中，落盘后重启仍生效', as
     assert.deepEqual(routed, A, 'B 被移出后不该被选');
 
     // 重启（新实例读同一个 home）后 B 仍在范围外
-    const second = makeCtx();
+    const second = makeCtx({ providers: [A.provider, B.provider] });
     apply(second.ctx, { pool: [A, B], statePath: stateFile, cooldownMs: 60_000, maxCooldownMs: 60_000 });
     const status = second.registered.find((t) => t.name === 'model_pool_status');
     const text = (await status.execute({})).text;
@@ -298,7 +303,7 @@ test('把通道加回范围后立刻参与选路', async () => {
   }
 });
 
-test('全部移出时退回整池，不会把模型全掐死', async () => {
+test('全部移出时保持为空，不做任何切换', async () => {
   const home = withTmpHome();
   try {
     const { ctx, registered, run } = makeCtx();
@@ -307,9 +312,10 @@ test('全部移出时退回整池，不会把模型全掐死', async () => {
     await toggle.execute({ route: `${A.provider}/${A.model}`, enabled: false });
     await toggle.execute({ route: `${B.provider}/${B.model}`, enabled: false });
 
+    // 严格按勾选执行：一条都没勾就是不切换，交还宿主（这里让它抛错终结这轮）
     await run('agent/request-error', { turn: 1, step: 1, provider: A.provider, failure: { code: 'QUOTA', message: '' } }, () => undefined);
     const routed = await run('agent/request', { turn: 1, step: 2 }, () => ({ ...A }));
-    assert.deepEqual(routed, B, '一条都没勾也要退回整池');
+    assert.deepEqual(routed, A, '一条都没勾时不该偷偷换到别的通道');
   } finally {
     home.restore();
   }
