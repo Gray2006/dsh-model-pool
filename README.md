@@ -1,11 +1,22 @@
 # dsh-model-pool
 
-给 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）用的**按额度自动换模型通道**插件。
+[English](README.en.md) · [简体中文](README.md) · MIT
 
-一条通道报「额度用尽 / 鉴权失败 / 没装适配器」时，把它拉黑冷却，同一步自动重跑到池里
-下一条可用的，不用人盯着。侧边栏有一页勾选框，手动决定哪些通道参与切换。
+给 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）用的**按额度自动换模型通道**插件。一条通道报「额度用尽 / 鉴权失败 / 没装适配器」时，自动拉黑冷却，同一步重跑到下一条可用的。侧边栏列出宿主里**所有配好且有 key 的模型**，勾哪些就切哪些。
 
-[English](README.en.md) · MIT
+> 目标版本 DSH `0.2.1-rc.2`。宿主扩展点 `agent/request`、`agent/request-error`、`llm.listProviders/listModels` 均为公开接口。
+
+```
+额度池
+2/4 条在切换范围
+[全选] [全不选]
+OPEN-DESIGN                        1/2
+☑ deepseek-v4.1-flash  [置顶]      [可用]
+☐ deepseek-v4.1-pro                [不在范围]
+COMMAND-CODE                       1/1
+☑ deepseek/deepseek-v4.1-flash     [冷却 2m3s]
+已扫描 · 冷却 10 分钟起    [重新扫描] [刷新]
+```
 
 ---
 
@@ -19,103 +30,73 @@
 
 然后这一轮就废了，得手动去 `/model` 换一个，重来。
 
-这个插件把这步自动化：池里排好几条通道，一条不行就自己换下一条，同一轮同一步接着跑，
-你甚至不会察觉。
+这个插件把这步自动化：池里排好几条通道，一条不行就自己换下一条，同一轮同一步接着跑，你甚至不会察觉。
 
-## 三分钟上手
+## 装
 
-### 1. 装
+插件目录挂进 profile 的 `node_modules`，再在 `cordis.patch.yml` 里登记。
+
+**Windows**（管理员不需要，普通 PowerShell 即可）：
 
 ```powershell
-# 把仓库链接到你的 profile 里（Windows）
 New-Item -ItemType Junction `
   -Path "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-model-pool" `
   -Target "<这个仓库的路径>"
 ```
 
-macOS / Linux 用软链：
+**macOS / Linux**：
 
 ```sh
 ln -s "<这个仓库的路径>" ~/.dsh/profiles/desktop/node_modules/dsh-model-pool
 ```
 
-### 2. 配
+> 走命令行的话，profile 名是 `desktop`（桌面应用）或 `web`（`dsh web`）。装错 profile 不会报错，插件只是不出现。
 
-编辑 `~/.dsh/profiles/desktop/cordis.patch.yml`，加一段：
+然后编辑 `~/.dsh/profiles/desktop/cordis.patch.yml`，加一段：
 
 ```yaml
 - insert:
     - id: dsh-model-pool
       name: dsh-model-pool
       config:
-        pool:                       # 顺序即优先级，排前面的先用
-          - { provider: open-design,  model: deepseek-v4.1-flash }
-          - { provider: command-code, model: deepseek/deepseek-v4.1-flash }
-          - { provider: zhipu,        model: glm-4.7-flash }
+        enabled: true
+        pool:
+          - { provider: open-design, model: deepseek-v4.1-flash }
 ```
 
-`provider` 和 `model` 的名字，就是你 DSH 里 `llm-pi-ai` 那节 `providers` 里已经配好的。
-插件不自己管 key，也不改你的 provider 配置——它只是在请求发出去之前换一下路由。
+重启 DSH，跑 `model_pool_status` 确认。
 
-**其实这一步也可以跳过**：插件启动时会自己扫一遍宿主里所有「配好且有 key」的模型，
-直接在侧边栏勾选就行。`config.pool` 的作用是**指定优先级**——写进去的那几条排在最前。
+**`config.pool` 可以留空**（甚至整个 `pool:` 都不写）：插件启动时会自己扫宿主里所有配好且有 key 的模型，直接去侧边栏勾。写进去的作用是**指定优先级**——那几条排最前，UI 上标「置顶」。
 
-### 3. 重启 DSH
+## 用
 
-重启后池子就生效了。想确认：
+### 侧边栏勾选
 
-```
-model_pool_status
-```
+右侧栏 **+** 菜单 → 「额度池」。第一次装时自动开一次，之后关掉就不再打扰。
 
-会列出所有候选模型、哪个在切换范围内、谁在冷却、下次请求走哪条。
+页面按 provider 分组列出扫描到的全部模型，每条一个勾选框，改完立刻生效，不用重启。
 
-### 4. 侧边栏勾选（加/删模型就靠它）
+| 操作 | 怎么做 |
+| --- | --- |
+| 加模型 | provider 已配好 → 点「重新扫描」→ 勾上 |
+| 暂时不用 | 取消勾选，立刻生效 |
+| 彻底移除 | 把 provider 从 DSH 配置里去掉，再重新扫描 |
 
-右侧栏的 **+** 菜单里会多一项「额度池」。第一次装时会自动帮你开一次，之后关了就不再打扰，
-随时可以从 **+** 菜单重新打开。
+勾选语义是**严格白名单**：只认勾上的。全部取消就真的不切换——「取消」就是取消，插件不会自作聪明偷偷退回某个默认池。
 
-页面里列出**扫描到的全部模型**，按 provider 分组，每条一个勾选框，改完立刻生效，不用重启。
-顶部有「全选 / 全不选」，底部有「重新扫描」——新配了 provider 不用重启 DSH，点一下就能刷出来。
-
-## 侧边栏那一页
-
-```
-额度池
-2/4 条在切换范围。勾上的才会被自动切过去；取消勾选的通道保持原样，不参与兜底。
-┌────────────────────────────────────────┐
-│ 下次请求                                │
-│ open-design/deepseek-v4.1-flash        │
-└────────────────────────────────────────┘
-[全选] [全不选]
-OPEN-DESIGN                        1/2
-☑ deepseek-v4.1-flash  [置顶]        [可用]
-☐ deepseek-v4.1-pro                  [不在范围]
-COMMAND-CODE                       1/1
-☑ deepseek/deepseek-v4.1-flash      [冷却 2m3s]
-ZHIPU                              0/1
-☐ glm-4.7-flash                     [不在范围]
-已扫描 · 冷却 10 分钟起        [重新扫描] [刷新]
-```
-
-**加模型**：如果那个 provider 已经在 DSH 里配好，点「重新扫描」它就会出现在列表里，勾上即可。
-**删模型**：取消勾选。想彻底从列表里消失，就把 provider 从 DSH 配置里去掉。
-
-- 「置顶」标记表示这条写在 `config.pool` 里，会被优先使用
-- 冷却中的通道显示倒计时，到点自动恢复
-
-**怎么决定勾哪些**：池里每条通道的成本和限制不一样。比如某些免费模型 `maxTokens`
-很小，大上下文请求换过去也装不下，会被判为失败然后拉黑。这种通道你可能想留在池外。
+唯一例外：**从来没勾过**（刚装好、页面没打开过）时退回 `config.pool`，保证装完就能用。
 
 勾选存在 `%DSH_HOME%/model-pool-selection.json`，和冷却表分开，重启后还在。
 
-语义是**严格白名单**：只认你勾上的。全部取消就真的什么都不切换，插件不会自作聪明地
-偷偷退回某个默认池——你要的「取消」就是取消。
+### 工具
 
-例外只有一个：**从来没勾过**（刚装好、没打开过页面）时，退回 `config.pool` 那几条，
-这样装完直接就能用。
+不想开页面也行：
 
-不想开页面也行，等价入口是 `model_pool_toggle` 工具。
+| 工具 | 干什么 |
+| --- | --- |
+| `model_pool_status` | 看全部候选、谁在切换范围、谁在冷却、下次走哪条 |
+| `model_pool_toggle` | 把某条加入或移出自动切换范围 |
+| `model_pool_reset` | 手动解除冷却，充值到账后立刻恢复 |
 
 ## 它怎么工作
 
@@ -128,45 +109,52 @@ ZHIPU                              0/1
 
 两条排序都有理由：
 
-- **`agent/request` 必须排最外层（`prepend`）**。waterfall 里先注册的最先跑，改写发生在
-  `next()` 返回之后，所以最外层等于最后生效。排在内层会被 `model-selection` 之类的
-  下游改写盖回手选值。
-- **`agent/request-error` 故意不 prepend**。排在内层就会先问下边的监听器（官方
-  `llm-retry` 的重试策略），它要重试就让它重试；只有它放手、且判明是额度类硬伤时
-  才接管，不会把手抖当成额度废号。
+- **`agent/request` 必须排最外层（`prepend`）**。waterfall 里先注册的最先跑，改写发生在 `next()` 返回之后，所以最外层等于最后生效。排在内层会被 `model-selection` 之类的下游改写盖回手选值。
+- **`agent/request-error` 故意不 prepend**。排在内层就会先问下边的监听器（官方 `dsh-llm-retry`），它想重试就让它重试；它不管了我们才换通道。
 
-因为 `agent/request-error` 返回 `retry` 后 loop 会 `continue`，下一次迭代重新走
-`prepareRequest()` → `agent/request`，所以拉黑当场就生效，不需要等下一轮。
+换通道时顺手剥掉继承来的 `reasoningEffort` / `maxTokens`：这两个字段是 provider 方言，跨厂商带着走会被 `prepareCall` 拒掉。反过来，**永远不改** `system-prompt/assemble` 里的 provider/model —— 那会让 prompt cache 全部失效。
+
+### 扫描模型
+
+```
+llm.listProviders()      → 有适配器的 provider
+llm.listModels(id)       → 这个 provider 真能用的模型
+```
+
+`llm-pi-ai` 在列模型前先解析 key，key 缺失返回空数组。所以扫出来的天然就是「能用」的那些，插件不用自己判断凭据。
 
 ## 失败怎么分类
 
-| 失败码 | 处理 | 理由 |
-| --- | --- | --- |
-| `QUOTA` / `ACCOUNT_QUOTA` | 拉黑 | 余额没了，重试多少次都是零 |
-| `AUTH` / `INVALID_CREDENTIAL` / `MISSING_CREDENTIAL` | 拉黑 | key 坏了，同一条通道不会自愈 |
-| `NO_ADAPTER` | 拉黑 | 这个 provider 没装适配器 |
-| `RATE_LIMIT` / `SERVER` / `TIMEOUT` / `TRANSPORT` / `EMPTY_RESPONSE` | 放行 | 抖动，宿主自己的重试策略负责 |
-| `CONTEXT_WINDOW_EXCEEDED` / `IMAGE_OFFLOAD_REQUIRED` | 放行 | 换谁都一样，换通道只会白烧一次调用 |
+只有**硬伤**才拉黑换人：
 
-错误码不可靠时看文本兜底：`余额不足`、`额度已用尽`、`insufficient balance`、
-`quota exceeded`、`invalid api key` 等。**文本判定优先于软码**：一条报 `RATE_LIMIT`
-但正文写着「余额不足」的失败，本质是额度问题穿了件限流的外衣，照样拉黑。
+| 类别 | 判据 | 处理 |
+| --- | --- | --- |
+| 硬伤 | `AUTH` `INVALID_CREDENTIAL` `MISSING_CREDENTIAL` `QUOTA` `ACCOUNT_QUOTA` `NO_ADAPTER` | 拉黑 + 冷却 + 换下一条 |
+| 软故障 | `RATE_LIMIT` `SERVER` `TIMEOUT` `TRANSPORT` `EMPTY_RESPONSE` 等 | 不动池子，交还宿主自己的重试策略 |
+
+**文本证据优先于错误码**。真实案例：套餐周额度耗尽时上游回的是
+
+```
+429 rate_limit_error: You've reached your weekly usage limit for your plan
+```
+
+`code` 是 `RATE_LIMIT`（本该放行），但正文说的是额度用尽。只认 `code` 就会一直卡在同一条上重试到死。所以正文命中额度词表时按硬伤处理。
 
 ## 冷却
 
-- 首次失败 `cooldownMs`（默认 10 分钟），同一条通道连续失败翻倍，封顶 `maxCooldownMs`（默认 1 小时）
-- 冷却期过了 strikes 归零，重新从 base 开始
-- 全池都在冷却时退化为「最早解冻的那条」，宁可试一下也不让这一轮直接死
-- 冷却表落盘到 `%DSH_HOME%/model-pool-state.json`，重启后仍记得
+失败后进冷却，同一步立刻换下一条：
+
+- 首次 `cooldownMs`（默认 10 分钟），连错按 `2^(n-1)` 翻倍，封顶 `maxCooldownMs`（默认 1 小时）
+- 成功一次就清零，不累积旧账
+- 全池都在冷却时不硬卡：挑最早解冻的那条再试一次，总比直接报错强
+- 冷却表存 `%DSH_HOME%/model-pool-state.json`，重启后仍记得谁在冷却
 
 ## 刻意不做的事
 
-- **不主动发探测请求**。探活要花钱、要烧 token，额度只从真实失败里学。你为一条状态行
-  付费，而下一个真实请求本来就会告诉你同一件事。
-- **不抢你手选的模型**。当前路由没在冷却就原样放行；你手选了池外的通道也不会被改。
-- **不改 `system-prompt/assemble` 里的 provider/model**。那两项每轮变化会击穿
-  prompt 缓存，代价比「提示里写的模型名和实际路由不同步」大得多。真实路由看
-  `model_pool_status`。
+- **不主动探活**。定时 ping 每个 provider 要花钱，而且探到的「可用」和真跑起来的可用不是一回事。只从真实失败里学。
+- **不抢手选**。你手动在 `/model` 选了某条，请求照你的走；只有那条挂了才轮到池子。
+- **不改你的 provider 配置**。key 和 provider 都归 DSH 管，插件只在请求出门前换一下路由。
+- **不做负载均衡**。它是有序降级，不是轮询——稳定优先。
 
 ## 配置项
 
@@ -176,59 +164,59 @@ ZHIPU                              0/1
       name: dsh-model-pool
       config:
         enabled: true
-        cooldownMs: 600000          # 首次冷却 10 分钟
-        maxCooldownMs: 3600000      # 封顶 1 小时
-        maxFailoversPerStep: 0      # 同一步最多换几次；0 = 按池大小自动
-        persist: true               # 冷却表落盘
-        statePath: ''               # 空 = %DSH_HOME%/model-pool-state.json
-        debug: false                # 打开后往宿主日志写装配与诊断信息
-        pool:                       # 顺序即优先级
-          - { provider: open-design,  model: deepseek-v4.1-flash }
-          - { provider: command-code, model: deepseek/deepseek-v4.1-flash }
-          - { provider: zhipu,        model: glm-4.7-flash }
+        cooldownMs: 600000         # 首次失败冷却 10 分钟
+        maxCooldownMs: 3600000     # 翻倍封顶 1 小时
+        maxFailoversPerStep: 0     # 0 = 按池大小自动定
+        persist: true              # 冷却表落盘
+        statePath: ''              # 空 = %DSH_HOME%/model-pool-state.json
+        debug: false               # true 打开详细日志
+        pool:
+          - { provider: open-design, model: deepseek-v4.1-flash }
 ```
 
-池条目可带 `reasoningEffort` 和 `maxTokens`。切换通道时，**继承来的**这两个值会被清掉：
-它们属于上一条通道的词汇表，跨通道带过去会让 `prepareCall` 直接拒掉请求。
-
-## 工具
-
-| 工具 | 用途 |
-| --- | --- |
-| `model_pool_status` | 池里有谁、谁在冷却、哪条被移出了范围、下次请求走哪条 |
-| `model_pool_reset` | 手动解除冷却（全部或指定一条），充值到账后用它立刻恢复 |
-| `model_pool_toggle` | 把某条通道纳入/移出切换范围（和侧边栏勾选等价） |
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `enabled` | `true` | 关掉就完全不动路由 |
+| `cooldownMs` | `600000` | 首次失败冷却时长 |
+| `maxCooldownMs` | `3600000` | 指数翻倍的上限 |
+| `maxFailoversPerStep` | `0` | 同一步最多换几次，`0` = 池大小 |
+| `persist` | `true` | 冷却表是否落盘 |
+| `statePath` | `''` | 自定义冷却表路径 |
+| `debug` | `false` | 详细日志（换通道播报始终可见） |
+| `pool` | `[]` | 优先路由；留空则全用扫描结果 |
 
 ## 状态文件
 
 | 文件 | 内容 |
 | --- | --- |
-| `%DSH_HOME%/model-pool-state.json` | 冷却表：路由、解冻时间、失败码、连错次数 |
-| `%DSH_HOME%/model-pool-selection.json` | 被移出切换范围的通道 |
+| `%DSH_HOME%/model-pool-state.json` | 冷却表 |
+| `%DSH_HOME%/model-pool-selection.json` | 侧边栏勾选 |
 
-都是普通 JSON，DSH 关着的时候删掉没关系——只会忘掉冷却和你的勾选。
+两个都只是 JSON，删掉等于重置，不会破坏别的状态。
 
 ## 已知边界
 
-- UI 的 `/model` 显示的是会话级手选，插件在 `agent/request` 层覆盖路由后两边可能不同步。
-  实际生效的是插件选的（除非手选那条正在冷却）。用 `model_pool_status` 看真实路由。
-- 只按失败学，不预判额度：一条通道额度还剩一点，会一直用到真失败为止。
-- 失败归因依赖 `failure.code`；纯文本兜底有误判可能，误判方向是「过早拉黑」，
-  冷却到期会自己恢复。
-- **免费额度通常卡 `maxTokens`**（智谱的免费模型尤其）。这类通道额度还剩也会因为
-  上下文装不下被判硬伤拉黑。这是预期行为，但会让免费通道反复进出——不想要就在
-  侧边栏取消勾选。
-- 侧边栏那一页需要 [`dsh-better-sidebar`](https://github.com/deepseek-ai/dsh-better-sidebar)。
-  没装它自动切换照样工作，只是看不到勾选页面。
+- **免费额度常常卡 `maxTokens`**。智谱这类免费模型上下文窗口小，大请求换过去也装不下，会被判 `CONTEXT_WINDOW_EXCEEDED` 拉黑。这不是 bug，是那档额度本来就装不下——留它在池外更合适。
+- **`/model` 显示的可能不是实际路由**。那是会话级手选值，插件在请求层换路，UI 未必跟得上。以 `model_pool_status` 为准。
+- **侧边栏那页依赖 `dsh-better-sidebar`**。没装的话自动切换照常工作，只是没有那个页面。
+- **跨会话不共享换路次数**。`maxFailoversPerStep` 按 `turn:step` 计，避免一个坏步骤把整池冷却吃干净。
 
-## 测试
+## 开发
 
-```sh
-node --test test/pool.test.mjs test/host.test.mjs
+无构建步骤，源码就是运行产物。
+
+```bash
+node --test test/pool.test.mjs test/host.test.mjs    # 32 个用例
 ```
 
-30 个用例，覆盖失败分类、指数退避、选路、全池冷却退化、落盘恢复、切换范围的持久化、
-HTTP 端点的同源校验，以及侧边栏面板在各状态下的渲染。不联网、不需要宿主。
+| 文件 | 内容 |
+| --- | --- |
+| `lib/pool.js` | 纯逻辑：失败分类、冷却、选路。无 I/O，好测 |
+| `lib/index.js` | 宿主半侧：钩子、工具、HTTP 路由 |
+| `lib/client.js` | 侧边栏页面（手写 bundle，不依赖构建器） |
+| `test/` | `node:test` 用例 |
+
+`cordis.patch.yml` 里默认 `pool: []`，保证照抄配置的人不会莫名其妙被切走。
 
 ## 许可
 

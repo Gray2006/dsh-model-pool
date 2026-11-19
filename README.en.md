@@ -1,182 +1,162 @@
 # dsh-model-pool
 
-Automatic model failover for [DeepSeek Harness](https://github.com/deepseek-ai) (DSH).
-When one provider runs out of quota, rejects its credentials, or has no adapter, the plugin
-benches it, retries the same step on the next route in the pool, and gets out of the way.
-A sidebar page lets you pick which routes are allowed to take part.
+[English](README.en.md) · [简体中文](README.md) · MIT
 
-[中文说明](README.md) · MIT
+Quota-aware model failover for [DeepSeek Harness](https://github.com/deepseek-ai) (DSH). When a route reports an exhausted quota, a bad credential, or no adapter, it gets benched and the same step is retried on the next usable route. The sidebar lists **every model in your host that is configured and has a working key** — check the ones you want in the pool.
 
----
-
-## The problem it solves
-
-Working with several relays and a few official quotas, the annoying part is not whether the
-model is smart enough — it is **running dry mid-turn**:
-
-```
-You have used up this month's quota
-```
-
-The turn is dead. You switch models by hand and start over.
-
-This plugin automates that step: order a few routes into a pool, and when one fails it moves
-to the next by itself, resuming the same step of the same turn. You usually will not notice.
-
-## Quick start
-
-### 1. Install
-
-```sh
-# macOS / Linux
-ln -s "<path-to-this-repo>" ~/.dsh/profiles/desktop/node_modules/dsh-model-pool
-```
-
-```powershell
-# Windows
-New-Item -ItemType Junction `
-  -Path "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-model-pool" `
-  -Target "<path-to-this-repo>"
-```
-
-### 2. Configure
-
-Edit `~/.dsh/profiles/desktop/cordis.patch.yml`:
-
-```yaml
-- insert:
-    - id: dsh-model-pool
-      name: dsh-model-pool
-      config:
-        pool:                       # order is priority; the first one is tried first
-          - { provider: open-design,  model: deepseek-v4.1-flash }
-          - { provider: command-code, model: deepseek/deepseek-v4.1-flash }
-          - { provider: zhipu,        model: glm-4.7-flash }
-```
-
-`provider` and `model` are the names already configured in your `llm-pi-ai` `providers`
-section. The plugin does not manage keys or rewrite your provider config — it only swaps the
-route just before the request leaves.
-
-**This step is optional.** On startup the plugin scans every model in the host that is
-configured *and* has a usable key; you can simply check them in the sidebar. `config.pool` is
-for **priority**: those routes are tried first.
-
-### 3. Restart DSH
-
-Then confirm with:
-
-```
-model_pool_status
-```
-
-It reports which routes exist, who is cooling, and what the next request will use.
-
-### 4. (Optional) Pick routes in the sidebar
-
-A **Model Pool** entry appears in the right sidebar's **+** menu. The plugin opens it once the
-first time it is installed, then leaves it alone; reopen any time from the + menu. Each route
-gets a checkbox that takes effect immediately, no restart.
-
-## What it does
-
-A pool is an ordered list of `provider/model` routes. The plugin hooks two host extension
-points and never probes anything on its own:
-
-| Hook | Order | Job |
-| --- | --- | --- |
-| `agent/request` | `prepend` | If the route about to be used is cooling down, swap in the next usable one |
-| `agent/request-error` | normal | Attribute the failure: a hard failure benches the route and returns `{kind:'retry'}` so the loop re-runs the same step |
-
-The ordering is deliberate:
-
-- **`agent/request` must be outermost (`prepend`).** In a cordis waterfall the first
-  registered listener runs first and the rewrite happens *after* `next()` returns, so
-  outermost means last word. Sitting inside would let `model-selection` and friends
-  overwrite the choice back to the manually selected route.
-- **`agent/request-error` is deliberately not prepended.** It sits inside so the official
-  `@deepseek-ai/dsh-llm-retry` gets asked first — a transient error it already handles
-  never benches a healthy route.
-
-### Which failures bench a route
-
-Benched (the route is genuinely unusable right now):
-
-`QUOTA` · `ACCOUNT_QUOTA` · `AUTH` · `INVALID_CREDENTIAL` · `MISSING_CREDENTIAL` · `NO_ADAPTER`
-
-Not benched (jitter — the host's own retry policy owns these):
-
-`RATE_LIMIT` · `SERVER` · `TIMEOUT` · `TRANSPORT` · `EMPTY_RESPONSE` · `CONTEXT_WINDOW_EXCEEDED` · `IMAGE_OFFLOAD_REQUIRED`
-
-Error codes alone are not enough, because providers word quota exhaustion in their own
-language. A text pattern list catches what the codes miss — including Chinese
-(`余额不足`, `额度已用尽`), which the host's built-in matcher does not cover. **Text
-evidence wins over a soft code:** a `RATE_LIMIT` whose message says "insufficient balance"
-is a quota failure wearing a rate-limit coat, and gets benched.
-
-Cooldowns are exponential per route: `cooldownMs × 2^(strikes-1)`, capped at
-`maxCooldownMs`. A route that serves successfully again resets its strikes.
-
-### What it does not do
-
-- **No active probing.** Quota is learned from real failures only. Probing costs money and
-  burns tokens for a status line — you would be paying to find out what the next real
-  request tells you for free.
-- **Does not steal your manual pick.** If the current route is not cooling, it passes
-  through untouched.
-- **Does not rewrite the system prompt.** Nudging the prompt to mention the active route
-  would break prompt caching on every switch, which costs far more than the convenience is
-  worth.
-
-## Sidebar: choose which routes participate
-
-Once installed, a **Model Pool** entry appears in the right sidebar's **+** menu — open it from
-there. The plugin opens it once automatically the first time it is installed, then leaves it
-alone if you close it; reopen any time from the + menu.
-
-(`registerTab` only registers the tab *type*; nothing appears on the tab strip by itself — that
-is better-sidebar's design: extension tabs are added through the + menu, not as permanent
-capsules.)
-
-The page lists **every model the plugin discovered**, grouped by provider, each with a
-checkbox. Changes take effect immediately, no restart. `Select all` / `Select none` sit at the
-top; `Rescan` at the bottom refreshes the list after you add a provider — no DSH restart needed.
+> Targets DSH `0.2.1-rc.2`. Uses the public host extension points `agent/request`, `agent/request-error`, and `llm.listProviders / listModels`.
 
 ```
 MODEL POOL
-2/4 routes in auto-switch scope. Only checked routes are used for failover.
+2/4 routes in auto-switch scope
 [Select all] [Select none]
 OPEN-DESIGN                        1/2
 ☑ deepseek-v4.1-flash  [pinned]     [ready]
 ☐ deepseek-v4.1-pro                 [out of scope]
 COMMAND-CODE                       1/1
 ☑ deepseek/deepseek-v4.1-flash      [cooling 2m3s]
+scanned · cooldown from 10 min    [Rescan] [Refresh]
 ```
 
-- **Checked** — in auto-switch scope: skipped when it fails, and eligible as a fallback target
-- **Unchecked** — out of scope: it can still be the route you pick by hand, but auto-switch
-  will never land on it
-- **pinned** means the route is written in `config.pool`, so it is tried first
+---
 
-**Adding a model**: if the provider is already configured in DSH, hit `Rescan` and it appears —
-then check it. **Removing**: uncheck it. To make it disappear from the list entirely, remove the
-provider from your DSH config.
+## The problem it solves
 
-The selection persists to `%DSH_HOME%/model-pool-selection.json`, separate from the cooldown
-table.
+When you run several relays and a couple of official quotas, the annoying failure is not a model being not-smart-enough — it is **running out of quota halfway through**:
 
-The semantics are a **strict allow-list**: only what you checked counts. Uncheck everything and
-nothing switches — the plugin will not quietly fall back to some default pool, because
-"uncheck" should mean uncheck.
+```
+You have reached your monthly usage limit
+```
 
-One exception: if you have **never** checked anything (fresh install, page never opened), it
-falls back to `config.pool` so the plugin is usable out of the box.
+The turn dies, you switch models by hand, you start over.
 
-The same thing is available without the page via the `model_pool_toggle` tool.
+This plugin automates that step: put several routes in the pool, and when one fails it moves to the next one within the same turn and the same step. You will usually not notice.
+
+## Install
+
+Link the plugin directory into the profile's `node_modules`, then register it in `cordis.patch.yml`.
+
+**Windows** (no administrator needed; a normal PowerShell works):
+
+```powershell
+New-Item -ItemType Junction `
+  -Path "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-model-pool" `
+  -Target "<path to this repo>"
+```
+
+**macOS / Linux**:
+
+```sh
+ln -s "<path to this repo>" ~/.dsh/profiles/desktop/node_modules/dsh-model-pool
+```
+
+> Profile names are `desktop` for the desktop app and `web` for `dsh web`. Installing into the wrong profile does not error — the plugin simply never shows up.
+
+Then edit `~/.dsh/profiles/desktop/cordis.patch.yml`:
+
+```yaml
+- insert:
+    - id: dsh-model-pool
+      name: dsh-model-pool
+      config:
+        enabled: true
+        pool:
+          - { provider: open-design, model: deepseek-v4.1-flash }
+```
+
+Restart DSH and run `model_pool_status` to confirm.
+
+**`config.pool` may be empty** (you can omit `pool:` entirely): on startup the plugin scans every model in the host that is configured and has a usable key, and you pick from the sidebar. What you write there sets **priority** — those routes are tried first and are marked `pinned` in the UI.
+
+## Use
+
+### Pick from the sidebar
+
+Right sidebar **+** menu → **Model Pool**. It opens once automatically after install, then stays out of the way; reopen any time.
+
+The page lists every discovered model grouped by provider, one checkbox each. Changes take effect immediately, no restart.
+
+| Task | How |
+| --- | --- |
+| Add a model | Provider already configured → hit **Rescan** → check it |
+| Stop using one for now | Uncheck it, immediate |
+| Remove it entirely | Remove the provider from your DSH config, then rescan |
+
+The semantics are a **strict allow-list**: only what you checked counts. Uncheck everything and nothing switches — "uncheck" means uncheck, and the plugin will not quietly fall back to some default pool.
+
+One exception: if you have **never** checked anything (fresh install, page never opened), it falls back to `config.pool` so it works out of the box.
+
+Selection lives in `%DSH_HOME%/model-pool-selection.json`, separate from the cooldown table, and survives restarts.
+
+### Tools
+
+Prefer not to open the page:
+
+| Tool | Purpose |
+| --- | --- |
+| `model_pool_status` | Every candidate, what is in scope, who is cooling, which route comes next |
+| `model_pool_toggle` | Put a route into or out of auto-switch scope |
+| `model_pool_reset` | Clear cooldowns manually — use this once a top-up lands |
+
+## How it works
+
+Two host extension points:
+
+| Point | Order | What it does |
+| --- | --- | --- |
+| `agent/request` | `prepend` | If this step's route is cooling, swap in the first usable route from the pool |
+| `agent/request-error` | normal | Classify the failure; on a hard failure bench the route and return `{kind:'retry'}` so the loop re-runs the same step |
+
+Both orders are deliberate:
+
+- **`agent/request` must be outermost (`prepend`).** In a waterfall the first-registered listener runs first, and the rewrite happens after `next()` returns — so outermost means "last word". Inside, something like `model-selection` would overwrite the swap with the manual pick.
+- **`agent/request-error` is deliberately not prepended.** It asks the inner listeners first (the official `dsh-llm-retry`); if that one wants to retry, let it. We take over only when it declines.
+
+When switching, inherited `reasoningEffort` / `maxTokens` are stripped: those two are provider dialect, and carrying them across vendors makes `prepareCall` reject the request. Conversely, the `system-prompt/assemble` provider/model is **never** rewritten — that would invalidate the entire prompt cache.
+
+### Model discovery
+
+```
+llm.listProviders()      -> providers with a registered adapter
+llm.listModels(id)       -> models that provider can actually serve
+```
+
+`llm-pi-ai` resolves the API key before listing and returns an empty array when it is missing, so whatever comes back is already usable — the plugin does not judge credentials itself.
+
+## Failure classification
+
+Only **hard failures** get a route benched:
+
+| Kind | Codes | Action |
+| --- | --- | --- |
+| Hard | `AUTH` `INVALID_CREDENTIAL` `MISSING_CREDENTIAL` `QUOTA` `ACCOUNT_QUOTA` `NO_ADAPTER` | Bench, cool down, switch |
+| Soft | `RATE_LIMIT` `SERVER` `TIMEOUT` `TRANSPORT` `EMPTY_RESPONSE`, etc. | Leave the pool alone, hand back to the host's retry policy |
+
+**Text evidence outranks the error code.** A real case: when a plan's weekly quota runs out, the upstream answers
+
+```
+429 rate_limit_error: You've reached your weekly usage limit for your plan
+```
+
+The `code` is `RATE_LIMIT` (would be passed through), but the body says the quota is gone. Trusting the code alone kept retrying the same dead route forever. So when the message matches a quota pattern, it is treated as hard.
+
+## Cooldowns
+
+A failed route cools down and the same step immediately moves on:
+
+- First failure: `cooldownMs` (default 10 min); repeats escalate as `2^(n-1)`, capped at `maxCooldownMs` (default 1 hour)
+- One success resets the counter — no accumulated debt
+- If every route is cooling it does not give up: it retries the one that unblocks soonest, which beats failing outright
+- The table persists to `%DSH_HOME%/model-pool-state.json`, so restarts remember who is cooling
+
+## Deliberate non-goals
+
+- **No active health probing.** Periodically pinging every provider costs money, and a probe saying "reachable" is not the same as a real request succeeding. It learns from real failures only.
+- **Never preempts a manual pick.** If you chose a route in `/model`, that is what runs; the pool only steps in when it fails.
+- **No provider config rewriting.** Keys and providers belong to DSH. The plugin only swaps the route just before the request leaves.
+- **No load balancing.** It is ordered degradation, not round-robin — stability first.
 
 ## Configuration
-
-In your profile's `cordis.patch.yml`:
 
 ```yaml
 - insert:
@@ -185,68 +165,58 @@ In your profile's `cordis.patch.yml`:
       config:
         enabled: true
         cooldownMs: 600000         # first failure: 10 min
-        maxCooldownMs: 3600000     # cap: 1 hour
+        maxCooldownMs: 3600000     # cap after escalation: 1 hour
         maxFailoversPerStep: 0     # 0 = derive from pool size
-        persist: true
+        persist: true              # persist the cooldown table
         statePath: ''              # empty = %DSH_HOME%/model-pool-state.json
-        debug: false               # log wiring and client diagnostics to the host log
-        pool:                      # order is priority
-          - { provider: open-design,  model: deepseek-v4.1-flash }
-          - { provider: command-code, model: deepseek/deepseek-v4.1-flash }
-          - { provider: zhipu,        model: glm-4.7-flash }
+        debug: false               # true = verbose logging
+        pool:
+          - { provider: open-design, model: deepseek-v4.1-flash }
 ```
 
-A pool entry may carry `reasoningEffort` and `maxTokens`. When switching away from a route
-those inherited values are stripped: they belong to the previous provider's vocabulary, and
-carrying them across makes `prepareCall` reject the request.
-
-## Tools
-
-| Tool | Purpose |
-| --- | --- |
-| `model_pool_status` | Which routes exist, who is cooling, which are out of scope, what the next request will use |
-| `model_pool_reset` | Clear cooldowns (all, or one route) — run this after topping up |
-| `model_pool_toggle` | Move a route in or out of auto-switch scope (same as the sidebar checkbox) |
-
-## Requirements
-
-The sidebar page needs
-[`dsh-better-sidebar`](https://github.com/deepseek-ai/dsh-better-sidebar) — without it the
-failover half still works, you just get no page. (Its tab registers through `ctx.betterSidebar`.)
-
-Everything else is plain Node ≥ 20, no build step, no dependency tree.
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Turn it off to stop touching routing entirely |
+| `cooldownMs` | `600000` | First-failure cooldown |
+| `maxCooldownMs` | `3600000` | Ceiling for the exponential escalation |
+| `maxFailoversPerStep` | `0` | Max switches per step; `0` = pool size |
+| `persist` | `true` | Whether the cooldown table is written to disk |
+| `statePath` | `''` | Custom cooldown-table path |
+| `debug` | `false` | Verbose logs (switch announcements are always visible) |
+| `pool` | `[]` | Priority routes; empty means use the scan results as-is |
 
 ## State files
 
 | File | Contents |
 | --- | --- |
-| `%DSH_HOME%/model-pool-state.json` | Cooldown table: route, deadline, failure code, strikes |
-| `%DSH_HOME%/model-pool-selection.json` | Routes removed from auto-switch scope |
+| `%DSH_HOME%/model-pool-state.json` | Cooldown table |
+| `%DSH_HOME%/model-pool-selection.json` | Sidebar selection |
 
-Both are plain JSON and safe to delete while DSH is stopped — losing them only forgets
-cooldowns and your checkboxes.
+Both are plain JSON. Deleting them resets the plugin and breaks nothing else.
 
 ## Known limits
 
-- The composer's `/model` picker shows the session-level manual choice. When this plugin
-  overrides the route at the `agent/request` layer, the two can disagree. The sidebar page
-  is the accurate view of what will actually be used.
-- Free tiers often cap `maxTokens` aggressively (GLM's free models, for instance). A route
-  with a small ceiling may reject a large-context request even though it has quota left;
-  that surfaces as a hard failure and benches it, which is the intended behaviour but can
-  make free routes churn. Uncheck them in the sidebar if that is not what you want.
-- No active health probing, by design (see above). A route that is dead but never receives
-  a request will not be discovered until it does.
+- **Free tiers often cap `maxTokens`.** Small-context free models (GLM/zhipu especially) cannot fit large requests, so they get benched for `CONTEXT_WINDOW_EXCEEDED`. That is not a bug — that tier genuinely cannot hold the request. Leaving it out of the pool is the intended remedy.
+- **`/model` may not show the route actually used.** That is the session-level manual choice; the plugin swaps at the request layer, so the UI can lag behind. Trust `model_pool_status`.
+- **The sidebar page needs `dsh-better-sidebar`.** Without it failover still works; you just do not get the page.
+- **Failover counts are per `turn:step`**, so one pathological step cannot burn the whole pool's cooldowns.
 
 ## Development
 
-```sh
-node --test test/pool.test.mjs test/host.test.mjs
+No build step — the source is the artifact.
+
+```bash
+node --test test/pool.test.mjs test/host.test.mjs    # 32 cases
 ```
 
-30 cases: failure classification, exponential backoff, selection persistence, route picking
-under cooldown, the HTTP endpoint's same-origin guard, and the panel's rendering across
-states. No network, no host required.
+| File | Contents |
+| --- | --- |
+| `lib/pool.js` | Pure logic: classification, cooldowns, route picking. No I/O, easy to test |
+| `lib/index.js` | Host half: hooks, tools, HTTP route |
+| `lib/client.js` | Sidebar page (hand-written bundle, no bundler) |
+| `test/` | `node:test` cases |
+
+`cordis.patch.yml` ships with `pool: []` so anyone copying the config is not silently rerouted.
 
 ## License
 
