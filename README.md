@@ -130,6 +130,7 @@ llm.listModels(id)       → 这个 provider 真能用的模型
 | 类别 | 判据 | 处理 |
 | --- | --- | --- |
 | 硬伤 | `AUTH` `INVALID_CREDENTIAL` `MISSING_CREDENTIAL` `QUOTA` `ACCOUNT_QUOTA` `NO_ADAPTER` | 拉黑 + 冷却 + 换下一条 |
+| 并发撞车 | 正文含 `concurrent` / `并发` 等 | 换下一条，但只冷却 `concurrencyCooldownMs`（默认 20 秒） |
 | 软故障 | `RATE_LIMIT` `SERVER` `TIMEOUT` `TRANSPORT` `EMPTY_RESPONSE` 等 | 不动池子，交还宿主自己的重试策略 |
 
 **文本证据优先于错误码**。真实案例：套餐周额度耗尽时上游回的是
@@ -140,11 +141,18 @@ llm.listModels(id)       → 这个 provider 真能用的模型
 
 `code` 是 `RATE_LIMIT`（本该放行），但正文说的是额度用尽。只认 `code` 就会一直卡在同一条上重试到死。所以正文命中额度词表时按硬伤处理。
 
+**并发限制单独算一类**，因为它和普通限流性质不同：普通限流罚的是整条通道，而并发槽位是**按通道各算**的——另一条通道有自己独立的并发额度，换过去立刻就能跑。所以它必须触发切换。
+
+但它也不该吃 10 分钟冷却：槽位通常几秒就释放。所以冷却时长单独给一个很短的默认值，而且**不计入连续失败次数**，免得一次并发撞车把这条通道的退避阶梯推高，下次真出问题时反而从更高的冷却开始。
+
+宿主把 429 和 concurrency 一律归成 `RATE_LIMIT`，光看错误码分不出来，所以这里同样靠正文识别。
+
 ## 冷却
 
 失败后进冷却，同一步立刻换下一条：
 
 - 首次 `cooldownMs`（默认 10 分钟），连错按 `2^(n-1)` 翻倍，封顶 `maxCooldownMs`（默认 1 小时）
+- 并发撞车例外：固定 `concurrencyCooldownMs`（默认 20 秒），不翻倍、不计入连错
 - 成功一次就清零，不累积旧账
 - 全池都在冷却时不硬卡：挑最早解冻的那条再试一次，总比直接报错强
 - 冷却表存 `%DSH_HOME%/model-pool-state.json`，重启后仍记得谁在冷却
@@ -166,6 +174,7 @@ llm.listModels(id)       → 这个 provider 真能用的模型
         enabled: true
         cooldownMs: 600000         # 首次失败冷却 10 分钟
         maxCooldownMs: 3600000     # 翻倍封顶 1 小时
+        concurrencyCooldownMs: 20000  # 并发撞车只冷却 20 秒
         maxFailoversPerStep: 0     # 0 = 按池大小自动定
         persist: true              # 冷却表落盘
         statePath: ''              # 空 = %DSH_HOME%/model-pool-state.json
@@ -179,6 +188,7 @@ llm.listModels(id)       → 这个 provider 真能用的模型
 | `enabled` | `true` | 关掉就完全不动路由 |
 | `cooldownMs` | `600000` | 首次失败冷却时长 |
 | `maxCooldownMs` | `3600000` | 指数翻倍的上限 |
+| `concurrencyCooldownMs` | `20000` | 并发撞车的固定冷却时长，不参与翻倍 |
 | `maxFailoversPerStep` | `0` | 同一步最多换几次，`0` = 池大小 |
 | `persist` | `true` | 冷却表是否落盘 |
 | `statePath` | `''` | 自定义冷却表路径 |

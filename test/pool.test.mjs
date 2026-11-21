@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   Cooldowns,
   classifyFailure,
+  isConcurrencyFailure,
   pickRoute,
   routeKey,
   sameRoute,
@@ -33,6 +34,49 @@ test('抖动类失败不摘通道', () => {
     assert.equal(classifyFailure(code, ''), 'soft', code);
     assert.equal(shouldFailover(code, ''), false, code);
   }
+});
+
+test('并发撞车要切换，但不能和普通限流混为一谈', () => {
+  // 宿主把 429 和 concurrency 一律归成 RATE_LIMIT。普通限流罚的是整条通道，
+  // 但并发槽位是按通道各算的 —— 另一条有自己的额度，换过去立刻能跑。
+  const cases = [
+    '429: concurrent request limit exceeded',
+    'Maximum concurrent requests reached',
+    'Too many concurrent connections',
+    '已达最大并发数',
+    '当前同时请求过多',
+  ];
+  for (const text of cases) {
+    assert.equal(classifyFailure('RATE_LIMIT', text), 'bench', text);
+    assert.equal(shouldFailover('RATE_LIMIT', text), true, text);
+    assert.equal(isConcurrencyFailure('RATE_LIMIT', text), true, text);
+  }
+
+  // 普通限流不能因为这条规则而误伤
+  for (const text of ['Too many requests per minute', 'rate limit exceeded']) {
+    assert.equal(classifyFailure('RATE_LIMIT', text), 'soft', text);
+    assert.equal(isConcurrencyFailure('RATE_LIMIT', text), false, text);
+  }
+});
+
+test('并发撞车用固定短冷却，且不推高连续失败次数', () => {
+  const cd = new Cooldowns({ now: () => 1_000_000 });
+  const route = { provider: 'p', model: 'm' };
+
+  // 普通失败：第一次 baseMs，第二次翻倍
+  const first = cd.strike(route, { code: 'QUOTA', baseMs: 60_000, maxMs: 600_000 });
+  assert.equal(first - 1_000_000, 60_000);
+  const second = cd.strike(route, { code: 'QUOTA', baseMs: 60_000, maxMs: 600_000 });
+  assert.equal(second - 1_000_000, 120_000);
+
+  // 并发撞车：固定时长，不看 strikes
+  const cd2 = new Cooldowns({ now: () => 1_000_000 });
+  const c1 = cd2.strike(route, { code: 'RATE_LIMIT', fixedMs: 20_000, noStrike: true });
+  assert.equal(c1 - 1_000_000, 20_000);
+  // 连着撞也不翻倍
+  const c2 = cd2.strike(route, { code: 'RATE_LIMIT', fixedMs: 20_000, noStrike: true });
+  assert.equal(c2 - 1_000_000, 20_000);
+  assert.equal(cd2.entries.get('p/m').strikes, 1);
 });
 
 test('套餐额度耗尽被包成 429 rate_limit_error 时也要摘', () => {

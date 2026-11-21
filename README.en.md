@@ -130,6 +130,7 @@ Only **hard failures** get a route benched:
 | Kind | Codes | Action |
 | --- | --- | --- |
 | Hard | `AUTH` `INVALID_CREDENTIAL` `MISSING_CREDENTIAL` `QUOTA` `ACCOUNT_QUOTA` `NO_ADAPTER` | Bench, cool down, switch |
+| Concurrency | body matches `concurrent` / `并发` and friends | Switch, but cool down only `concurrencyCooldownMs` (default 20 s) |
 | Soft | `RATE_LIMIT` `SERVER` `TIMEOUT` `TRANSPORT` `EMPTY_RESPONSE`, etc. | Leave the pool alone, hand back to the host's retry policy |
 
 **Text evidence outranks the error code.** A real case: when a plan's weekly quota runs out, the upstream answers
@@ -140,11 +141,18 @@ Only **hard failures** get a route benched:
 
 The `code` is `RATE_LIMIT` (would be passed through), but the body says the quota is gone. Trusting the code alone kept retrying the same dead route forever. So when the message matches a quota pattern, it is treated as hard.
 
+**Concurrency limits are their own class**, because they behave differently from ordinary rate limiting. A rate limit punishes the whole route; a concurrency slot is counted **per route**, so another route has its own independent allowance and switching to it works immediately. It has to trigger a failover.
+
+It should not cost 10 minutes of cooldown either — slots usually free up within seconds. So it gets its own short fixed duration, and it is **not counted as a consecutive failure**, so one collision does not push that route's backoff ladder higher and make a genuine failure later start from a longer cooldown.
+
+The host maps both 429s and concurrency errors to `RATE_LIMIT`, so the code alone cannot tell them apart — this is text matching again.
+
 ## Cooldowns
 
 A failed route cools down and the same step immediately moves on:
 
 - First failure: `cooldownMs` (default 10 min); repeats escalate as `2^(n-1)`, capped at `maxCooldownMs` (default 1 hour)
+- Concurrency collisions are the exception: fixed `concurrencyCooldownMs` (default 20 s), no escalation, not counted as a strike
 - One success resets the counter — no accumulated debt
 - If every route is cooling it does not give up: it retries the one that unblocks soonest, which beats failing outright
 - The table persists to `%DSH_HOME%/model-pool-state.json`, so restarts remember who is cooling
@@ -166,6 +174,7 @@ A failed route cools down and the same step immediately moves on:
         enabled: true
         cooldownMs: 600000         # first failure: 10 min
         maxCooldownMs: 3600000     # cap after escalation: 1 hour
+        concurrencyCooldownMs: 20000  # concurrency collision: 20 s only
         maxFailoversPerStep: 0     # 0 = derive from pool size
         persist: true              # persist the cooldown table
         statePath: ''              # empty = %DSH_HOME%/model-pool-state.json
@@ -179,6 +188,7 @@ A failed route cools down and the same step immediately moves on:
 | `enabled` | `true` | Turn it off to stop touching routing entirely |
 | `cooldownMs` | `600000` | First-failure cooldown |
 | `maxCooldownMs` | `3600000` | Ceiling for the exponential escalation |
+| `concurrencyCooldownMs` | `20000` | Fixed cooldown for concurrency collisions; never escalates |
 | `maxFailoversPerStep` | `0` | Max switches per step; `0` = pool size |
 | `persist` | `true` | Whether the cooldown table is written to disk |
 | `statePath` | `''` | Custom cooldown-table path |

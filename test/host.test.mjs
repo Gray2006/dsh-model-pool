@@ -136,6 +136,23 @@ test('池条目自带 reasoningEffort / maxTokens 时才带上', async () => {
   assert.equal(routed.maxTokens, 4096);
 });
 
+test('并发撞车会换通道，且冷却远短于普通失败', async () => {
+  const { ctx, run } = makeCtx();
+  apply(ctx, { pool: [A, B], persist: false, cooldownMs: 600_000, concurrencyCooldownMs: 20_000 });
+
+  const action = await run('agent/request-error', {
+    turn: 1,
+    step: 1,
+    provider: A.provider,
+    failure: { code: 'RATE_LIMIT', message: '429: concurrent request limit exceeded' },
+  }, () => undefined);
+  assert.deepEqual(action, { kind: 'retry' }, '并发撞车必须触发切换');
+
+  // 下一步立刻换到 B
+  const routed = await run('agent/request', { turn: 1, step: 2 }, () => ({ ...A }));
+  assert.deepEqual(routed, B);
+});
+
 test('抖动类失败不换通道，只交给宿主重试', async () => {
   const { ctx, run } = makeCtx();
   apply(ctx, { pool: [A, B], persist: false });
