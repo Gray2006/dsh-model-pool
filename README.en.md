@@ -88,6 +88,18 @@ One exception: if you have **never** checked anything (fresh install, page never
 
 Selection lives in `%DSH_HOME%/model-pool-selection.json`, separate from the cooldown table, and survives restarts.
 
+### "Selected" and "actual" are not the same thing
+
+The plugin swaps routes at the **request layer**, so `/model` keeps showing your manual pick. When the two disagree, the sidebar says so explicitly:
+
+```
+This step was rerouted by the plugin
+open-design/deepseek-v4.1-flash → command-code/deepseek/deepseek-v4.1-flash
+Your manual pick is unchanged; /model still shows it. Trust this panel.
+```
+
+The manual pick is never rewritten — that is deliberate, otherwise the route you chose by hand would silently change after a restart. To see what actually ran, read the sidebar or `model_pool_status`.
+
 ### Tools
 
 Prefer not to open the page:

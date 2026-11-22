@@ -88,6 +88,18 @@ ln -s "<这个仓库的路径>" ~/.dsh/profiles/desktop/node_modules/dsh-model-p
 
 勾选存在 `%DSH_HOME%/model-pool-selection.json`，和冷却表分开，重启后还在。
 
+### 「手选」和「实际」不是一回事
+
+插件在**请求层**换路，`/model` 里显示的仍是你的手选值。两者不一致时，侧边栏会单独标出来：
+
+```
+本步被插件换过路
+open-design/deepseek-v4.1-flash → command-code/deepseek/deepseek-v4.1-flash
+手选值没变，/model 里仍显示原来那条，以这里为准
+```
+
+手选值不会被改写——这是刻意的，否则你手动选的那条会在下次重启后莫名其妙变了。判断实际走了哪条，看侧边栏或 `model_pool_status`。
+
 ### 工具
 
 不想开页面也行：

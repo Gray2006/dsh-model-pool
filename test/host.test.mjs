@@ -338,6 +338,40 @@ test('全部移出时保持为空，不做任何切换', async () => {
   }
 });
 
+test('快照暴露「手选路由」与「实际路由」，换过路时要标出来', async () => {
+  const home = withTmpHome();
+  try {
+    const routes = [];
+    const webServer = { register(route) { routes.push(route); return () => {}; } };
+    const { ctx, run } = makeCtx({ webServer });
+    apply(ctx, { pool: [A, B], persist: false, cooldownMs: 60_000, maxCooldownMs: 60_000 });
+
+    const read = async () => {
+      let body;
+      const response = { writeHead() {}, end(text) { body = text; } };
+      await routes[0].handler({ method: 'GET', headers: {}, url: '/model-pool/state' }, response);
+      return JSON.parse(body);
+    };
+
+    // 第一次请求：没有冷却，按手选值走，不算换路
+    await run('agent/request', { turn: 1, step: 1 }, () => ({ ...A }));
+    let snap = await read();
+    assert.equal(snap.manual, `${A.provider}/${A.model}`);
+    assert.equal(snap.actual, `${A.provider}/${A.model}`);
+    assert.equal(snap.swapped, false);
+
+    // A 撞额度 → 下一步换到 B，快照要如实反映
+    await run('agent/request-error', { turn: 1, step: 1, provider: A.provider, failure: { code: 'QUOTA', message: '' } }, () => undefined);
+    await run('agent/request', { turn: 1, step: 2 }, () => ({ ...A }));
+    snap = await read();
+    assert.equal(snap.manual, `${A.provider}/${A.model}`, '手选值不该被改写');
+    assert.equal(snap.actual, `${B.provider}/${B.model}`);
+    assert.equal(snap.swapped, true, '换过路就必须标出来');
+  } finally {
+    home.restore();
+  }
+});
+
 test('HTTP 状态快照带上 inScope 与冷却信息', async () => {
   const home = withTmpHome();
   try {
