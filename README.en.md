@@ -76,6 +76,8 @@ Right sidebar **+** menu → **Model Pool**. It opens once automatically after i
 
 The page lists every discovered model grouped by provider, one checkbox each. Changes take effect immediately, no restart.
 
+With many models the header, next-request block and select-all buttons stay pinned at the top, the footer stays pinned at the bottom, and the list scrolls between them — so the buttons never get pushed out of view. Past six entries a filter box appears, matching on provider or model name.
+
 | Task | How |
 | --- | --- |
 | Add a model | Provider already configured → hit **Rescan** → check it |
